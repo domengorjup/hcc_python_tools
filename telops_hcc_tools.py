@@ -2,7 +2,7 @@
 
 """telops_hcc_tools.py: Common tools to interface with Telops .hcc files."""
 
-__author__ = "Domen Gorjup"
+__author__ = "Domen Gorjup, Klemen Zaletelj"
 
 
 import os
@@ -15,74 +15,97 @@ from tqdm import tqdm
 from TelopsToolbox.hcc.readIRCam import read_ircam
 
 
-def read_hcc(file, crop_tblr=None):
+def read_hcc(file, crop_tblr=None, allow_pickle=True):
     """
     Load a single .hcc file.
     """
-    measurement_name = os.path.split(os.path.split(file)[0])[-1]
-    _, header, _, _ = read_ircam(file, headers_only=True)
-    widths = header['Width']
-    heights = header['Height']
-    time_true = header['POSIXTime'] + header['SubSecondTime']*(10**(-7))
-    time_true -= time_true[0]
-    w = widths[0]
-    h = heights[0]
-    convert_offset = header['DataOffset']
-    fps = header['AcquisitionFrameRate'][0]
-    dt = 1 / fps
-    N = widths.shape[0]
-    time = np.arange(N) * dt + dt
-    data, header, _, _ = read_ircam(file, frames=np.arange(N))
+    pickle_file = os.path.splitext(file)[0] + '.pkl'
+    if os.path.exists(pickle_file) and allow_pickle:
+        return pickle_load(pickle_file)
     
-    if all(header["Height"] == header["Height"]) and all(header["Width"] == header["Width"]):
-        data_im_raw = np.reshape(data, (N, h, w))[:, ::-1, ::-1]
     else:
-        data_im_raw = np.array([np.reshape(data[i, :], (header["Height"][i], header["Width"][i])) for i in range(N)])[:, ::-1, ::-1]
+        measurement_name = os.path.split(os.path.split(file)[0])[-1]
+        _, header, _, _ = read_ircam(file, headers_only=True)
+        widths = header['Width']
+        heights = header['Height']
+        time_true = header['POSIXTime'] + header['SubSecondTime']*(10**(-7))
+        time_true -= time_true[0]
+        w = widths[0]
+        h = heights[0]
+        convert_offset = header['DataOffset']
+        fps = header['AcquisitionFrameRate'][0]
+        dt = 1 / fps
+        N = widths.shape[0]
+        time = np.arange(N) * dt + dt
+        data, header, _, _ = read_ircam(file, frames=np.arange(N))
 
-    if crop_tblr is None:
-        frame_data = data_im_raw
-    elif len(crop_tblr) == 4:
-        top, bottom, left, right = crop_tblr
-        frame_data = data_im_raw[:, top:bottom, left:right]
-    
-    data_im = frame_data - convert_offset[:, None, None]
-    return time, data_im, header
+        if all(header["Height"] == header["Height"]) and all(header["Width"] == header["Width"]):
+            data_im_raw = np.reshape(data, (N, h, w))[:, ::-1, ::-1]
+        else:
+            data_im_raw = np.array([np.reshape(data[i, :], (header["Height"][i], header["Width"][i])) for i in range(N)])[:, ::-1, ::-1]
+
+        if crop_tblr is None:
+            frame_data = data_im_raw
+        elif len(crop_tblr) == 4:
+            top, bottom, left, right = crop_tblr
+            frame_data = data_im_raw[:, top:bottom, left:right]
+
+        data_im = frame_data - convert_offset[:, None, None]
+
+        if allow_pickle:
+            pickle_dump(pickle_file, time=time, frames=data_im, header=header)
+
+        return time, data_im, header
 
 
-def pickle_dump(path, **kwargs):
+def pickle_dump(path, time, frames, header):
     """
     Dump a dictionary of all keyword arguments to pickle.
     """
     with open(path, 'wb') as file:
-        pickle.dump(kwargs, file)
+        pickle.dump({'time':time, 'frames':frames, 'header':header}, file)
 
 
-def read_segmented(files, crop_tblr=None, save_pickle=True):
+def pickle_load(path):
+    with open(path, 'rb') as f:
+        out = pickle.load(f)
+    
+    return out['time'], out['frames'], out['header']
+
+
+def read_segmented(files, crop_tblr=None, allow_pickle=True):
     """
     Load Telops footage, segmented into multiple .hcc `files`, into a single array.
     """
-    if len(files) > 1:
-        frames = None
-        time = None
-        for f in tqdm(files):
-            t, data_im, header, = read_hcc(f, crop_tblr=crop_tblr)
-            if frames is None:
-                frames = data_im
-                time = t
-            else:
-                frames = np.append(frames, data_im, axis=0)
-                time = np.append(time, t+time[-1])
-    
-    elif len(files) == 1:
-        time, frames, header = read_hcc(files[0], crop_tblr=crop_tblr)
+    if type(files) == str:
+        files = [files]
 
-    if save_pickle:
-        pickle_file = os.path.splitext(files[0])[0] + '.pkl'
-        pickle_dump(pickle_file, time=time, frames=frames, header=header)
-        print(f'Data (time, frames, header) saved to {pickle_file:s}.')
+    pickle_file = os.path.splitext(files[0])[0] + '_all_segments.pkl'
 
-    return time, frames, header
+    if os.path.exists(pickle_file) and allow_pickle:
+        return pickle_load(pickle_file)
 
+    else:
+        if len(files) > 1:
+            frames = None
+            time = None
+            for f in tqdm(files):
+                t, data_im, header, = read_hcc(f, crop_tblr=crop_tblr, allow_pickle=False)
+                if frames is None:
+                    frames = data_im
+                    time = t
+                else:
+                    frames = np.append(frames, data_im, axis=0)
+                    time = np.append(time, t+time[-1])
+        
+        elif len(files) == 1:
+            time, frames, header = read_hcc(files[0], crop_tblr=crop_tblr, allow_pickle=False)
+
+        if allow_pickle:
+            pickle_dump(pickle_file, time=time, frames=frames, header=header)
+            print(f'Data (time, frames, header) saved to {pickle_file:s}.')
+
+        return time, frames, header
 
 
 def convert_to_pickle(files, crop_tblr=None):
@@ -94,7 +117,9 @@ def convert_to_pickle(files, crop_tblr=None):
 
     for file in files:
         print(f'Converting file:\n\t{file:s}')
-        time, frames, header = read_hcc(file, crop_tblr=crop_tblr)
+
+        # Allow_pickle is False to force the overwrite of existing pickle files.
+        time, frames, header = read_hcc(file, crop_tblr=crop_tblr, allow_pickle=False)
 
         pickle_file = os.path.splitext(file)[0] + '.pkl'
         pickle_dump(pickle_file, time=time, frames=frames, header=header)
