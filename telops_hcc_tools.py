@@ -18,13 +18,23 @@ from TelopsToolbox.hcc.readIRCam import read_ircam
 def read_hcc(file, crop_tblr=None, allow_pickle=True):
     """
     Load a single .hcc file.
+
+    :param file: str, path to .hcc file to read.
+    :param crop_tblr: tuple, (top, bottom, left, right), parameters used to crop the read footage. 
+        If None, the images are not cropped. Defaults to None.
+    :param allow_pickle: bool, whether or not to use pickle to load / save the read data. If True,
+        the data is read from a .pkl file with the same name, if one exists, and the read data
+        is saved to a pickle file if one does not yet exist. Defaults to True.
+    :return time: array of shape (n,), the time vector corresponding to read image frames.
+    :return frames: aray of shape (n, h, w), the read image data.
+    :return header: dict, the .hcc file info header.
     """
     pickle_file = os.path.splitext(file)[0] + '.pkl'
     if os.path.exists(pickle_file) and allow_pickle:
         return pickle_load(pickle_file)
     
     else:
-        measurement_name = os.path.split(os.path.split(file)[0])[-1]
+        #measurement_name = os.path.split(os.path.split(file)[0])[-1]
         _, header, _, _ = read_ircam(file, headers_only=True)
         widths = header['Width']
         heights = header['Height']
@@ -50,23 +60,30 @@ def read_hcc(file, crop_tblr=None, allow_pickle=True):
             top, bottom, left, right = crop_tblr
             frame_data = data_im_raw[:, top:bottom, left:right]
 
-        data_im = frame_data - convert_offset[:, None, None]
+        frames = frame_data - convert_offset[:, None, None]
 
         if allow_pickle:
-            pickle_dump(pickle_file, time=time, frames=data_im, header=header)
+            pickle_dump(pickle_file, time=time, frames=frames, header=header)
 
-        return time, data_im, header
+        return time, frames, header
 
 
 def pickle_dump(path, time, frames, header):
     """
-    Dump a dictionary of all keyword arguments to pickle.
+    Dump a dictionary of read .hcc file to pickle.
     """
     with open(path, 'wb') as file:
         pickle.dump({'time':time, 'frames':frames, 'header':header}, file)
 
 
 def pickle_load(path):
+    """
+    Read a pickled dictionary of .hcc data.
+
+    :return time: array of shape (n,), the time vector corresponding to read image frames.
+    :return frames: aray of shape (n, h, w), the read image data.
+    :return header: dict, the .hcc file info header.
+    """
     with open(path, 'rb') as f:
         out = pickle.load(f)
     
@@ -75,7 +92,22 @@ def pickle_load(path):
 
 def read_segmented(files, crop_tblr=None, allow_pickle=True):
     """
-    Load Telops footage, segmented into multiple .hcc `files`, into a single array.
+    Load Telops footage, segmented into multiple .hcc `files`, and concatenate it into a 
+    single array.
+
+    :param files: list or str, list of multiple filenames, constituting a single segmented .hcc
+        measurement. If the list contains the path to a single .hcc file, the return of `read_hcc`
+        is returned. If a sting is passed instead, it is assumed to contain the path to a single
+        .hcc file.
+    :param crop_tblr: tuple, (top, bottom, left, right), parameters used to crop the read footage. 
+        If None, the images are not cropped. Defaults to None.
+    :param allow_pickle: bool, whether or not to use pickle to load / save the read data. If True,
+        the data is read from a .pkl file with the same name, if one exists, and the read data
+        is saved to a pickle file if one does not yet exist. Defaults to True.
+    :return time: array of shape (n,), the time vector corresponding to read image frames.
+    :return frames: aray of shape (n, h, w), the read image data.
+    :return header: dict, the .hcc file info header.
+
     """
     if type(files) == str:
         files = [files]
@@ -99,7 +131,7 @@ def read_segmented(files, crop_tblr=None, allow_pickle=True):
                     time = np.append(time, t+time[-1])
         
         elif len(files) == 1:
-            time, frames, header = read_hcc(files[0], crop_tblr=crop_tblr, allow_pickle=False)
+            time, frames, header = read_hcc(files[0], crop_tblr=crop_tblr, allow_pickle=allow_pickle)
 
         if allow_pickle:
             pickle_dump(pickle_file, time=time, frames=frames, header=header)
@@ -111,6 +143,14 @@ def read_segmented(files, crop_tblr=None, allow_pickle=True):
 def convert_to_pickle(files, crop_tblr=None):
     """
     Read .hcc file / multiple files and save the data into a .pkl file.
+    Does not return the read data. To read the data use `read_segmented`.
+
+    :param files: list or str, list of multiple filenames, constituting a single segmented .hcc
+        measurement. If the list contains the path to a single .hcc file, the return of `read_hcc`
+        is returned. If a sting is passed instead, it is assumed to contain the path to a single
+        .hcc file.
+    :param crop_tblr: tuple, (top, bottom, left, right), parameters used to crop the read footage. 
+        If None, the images are not cropped. Defaults to None.
     """
     if type(files) == str:
         files = [files]
@@ -118,7 +158,7 @@ def convert_to_pickle(files, crop_tblr=None):
     for file in files:
         print(f'Converting file:\n\t{file:s}')
 
-        # Allow_pickle is False to force the overwrite of existing pickle files.
+        # allow_pickle is False to force the overwrite of existing pickle files.
         time, frames, header = read_hcc(file, crop_tblr=crop_tblr, allow_pickle=False)
 
         pickle_file = os.path.splitext(file)[0] + '.pkl'
